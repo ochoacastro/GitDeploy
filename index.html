@@ -1022,6 +1022,9 @@
     <div class="explorer-breadcrumb" id="explorerBreadcrumb">
       <span class="breadcrumb-item" onclick="explorerNavigate('')">⬡ raíz</span>
     </div>
+    <div style="display:flex;justify-content:flex-end;margin:-4px 0 10px">
+      <button class="btn btn-ghost" onclick="openCreateFolderModal()" style="padding:5px 12px;font-size:10px">＋ Carpeta</button>
+    </div>
     <div id="deleteConfirmBar" class="delete-confirm-bar">
       <div class="delete-confirm-name" id="deleteConfirmName"></div>
       <div class="delete-confirm-actions">
@@ -2370,7 +2373,7 @@
           </div>
           <div class="explorer-item-actions">
             ${isDir
-              ? `<button class="btn btn-ghost" onclick="explorerNavigate('${item.path.replace(/'/g,"\\'")}')">Abrir →</button>`
+              ? `<button class="btn btn-ghost" onclick="explorerNavigate('${item.path.replace(/'/g,"\\'")}')">Abrir →</button><button class="btn btn-ghost" style="font-size:10px;padding:5px 8px" title="Mover/renombrar carpeta" onclick="openMoveFolderModal('${item.path.replace(/'/g,"\\'")}','${item.name.replace(/'/g,"\\'")}')">✎</button><button class="btn btn-ghost" style="font-size:10px;padding:5px 8px" title="Eliminar carpeta" onclick="askDeleteFolder('${item.path.replace(/'/g,"\\'")}','${item.name.replace(/'/g,"\\'")}')">🗑</button>`
               : `<button class="btn btn-ghost" style="font-size:10px;padding:5px 8px" title="Copiar código" onclick="downloadFile('${item.path.replace(/'/g,"\\'")}','${item.name.replace(/'/g,"\\'")}')">📋</button><button class="btn btn-ghost" style="font-size:10px;padding:5px 8px" title="Historial" onclick="openHistory('${item.path.replace(/'/g,"\\'")}')">🕘</button><button class="btn btn-ghost" style="font-size:10px;padding:5px 8px" title="Renombrar/Mover" onclick="openRenameFileModal('${item.path.replace(/'/g,"\\'")}','${item.name.replace(/'/g,"\\'")}')">✎</button><button class="btn btn-ghost" style="font-size:10px;padding:5px 8px" title="Eliminar" onclick="askDeleteFile('${item.path.replace(/'/g,"\\'")}','${(item.sha||'').replace(/'/g,"\\'")}','${item.name.replace(/'/g,"\\'")}')">🗑</button>`
             }
           </div>
@@ -2417,6 +2420,110 @@
     document.getElementById('explorerPanel').scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  // ─── Crear carpeta ───────────────────────────────────────────────────────
+  function openCreateFolderModal() {
+    let modal = document.getElementById('createFolderModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'createFolderModal';
+      modal.className = 'rename-modal-overlay';
+      modal.innerHTML = `
+        <div class="rename-modal">
+          <div class="modal-title">＋ Nueva carpeta</div>
+          <div class="modal-subtitle">Se creará dentro de <code style="color:var(--accent);font-size:11px" id="createFolderBase"></code></div>
+          <div class="field" style="margin-top:14px">
+            <label>Nombre de la carpeta</label>
+            <input type="text" id="createFolderInput" class="input" placeholder="nueva-carpeta"
+              onkeydown="if(event.key==='Enter') confirmCreateFolder()">
+          </div>
+          <div id="createFolderAlert" class="alert" style="margin-top:8px"></div>
+          <div class="modal-actions" style="margin-top:14px">
+            <button class="btn btn-ghost" onclick="closeCreateFolderModal()">Cancelar</button>
+            <button class="btn btn-primary" id="confirmCreateFolderBtn" onclick="confirmCreateFolder()">
+              <span id="createFolderSpinner" class="spinner"></span>
+              <span id="createFolderBtnText">Crear carpeta</span>
+            </button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+    }
+    document.getElementById('createFolderBase').textContent = explorerPath ? explorerPath + '/' : '/ (raíz)';
+    document.getElementById('createFolderInput').value = '';
+    document.getElementById('createFolderAlert').className = 'alert';
+    document.getElementById('createFolderBtnText').textContent = 'Crear carpeta';
+    document.getElementById('confirmCreateFolderBtn').disabled = false;
+    modal.classList.add('visible');
+    setTimeout(() => document.getElementById('createFolderInput').focus(), 100);
+  }
+
+  function closeCreateFolderModal() {
+    const m = document.getElementById('createFolderModal');
+    if (m) m.classList.remove('visible');
+  }
+
+  async function confirmCreateFolder() {
+    if (!selectedRepo) return;
+    const rawName = document.getElementById('createFolderInput').value.trim().replace(/^\/+|\/+$/g, '');
+    const alertEl = document.getElementById('createFolderAlert');
+    if (!rawName) { alertEl.className = 'alert error visible'; alertEl.textContent = 'Ingresa un nombre de carpeta.'; return; }
+
+    document.getElementById('createFolderSpinner').classList.add('visible');
+    document.getElementById('createFolderBtnText').textContent = 'Creando...';
+    document.getElementById('confirmCreateFolderBtn').disabled = true;
+
+    try {
+      const branch = selectedRepo.default_branch || 'main';
+      const folderPath = (explorerPath ? explorerPath + '/' : '') + rawName;
+      const keepPath = folderPath + '/.gitkeep';
+      // Git no versiona carpetas vacías: se crea un .gitkeep para materializarla
+      const res = await ghPut(`/repos/${selectedRepo.full_name}/contents/${encodeURIComponent(keepPath)}`, {
+        message: `Create folder ${folderPath} via GitDeploy`,
+        content: '',
+        branch
+      });
+      if (!res.content && !res.commit) throw new Error(res.message || 'No se pudo crear la carpeta.');
+
+      closeCreateFolderModal();
+      const exAlert = document.getElementById('explorerAlert');
+      exAlert.className = 'alert success visible';
+      exAlert.textContent = `✓ Carpeta "${rawName}" creada correctamente.`;
+      setTimeout(() => { exAlert.className = 'alert'; }, 4000);
+      await explorerNavigate(explorerPath);
+    } catch(e) {
+      alertEl.className = 'alert error visible';
+      alertEl.textContent = '✗ ' + e.message;
+    }
+
+    document.getElementById('createFolderSpinner').classList.remove('visible');
+    document.getElementById('createFolderBtnText').textContent = 'Crear carpeta';
+    document.getElementById('confirmCreateFolderBtn').disabled = false;
+  }
+
+  function askDeleteFolder(folderPath, folderName) {
+    pendingDelete = { path: folderPath, name: folderName, isFolder: true };
+    document.getElementById('deleteConfirmName').textContent = `¿Eliminar la carpeta "${folderName}" y TODO su contenido? Esta acción no se puede deshacer.`;
+    document.getElementById('deleteConfirmBar').classList.add('visible');
+    document.getElementById('explorerPanel').scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function listFilesRecursive(path) {
+    const branch = selectedRepo.default_branch || 'main';
+    const encodedPath = path ? path.split('/').map(encodeURIComponent).join('/') : '';
+    const apiPath = encodedPath ? `/repos/${selectedRepo.full_name}/contents/${encodedPath}?ref=${branch}`
+                                : `/repos/${selectedRepo.full_name}/contents?ref=${branch}`;
+    const items = await ghGet(apiPath);
+    if (!Array.isArray(items)) return [];
+    let results = [];
+    for (const item of items) {
+      if (item.type === 'dir') {
+        results = results.concat(await listFilesRecursive(item.path));
+      } else if (item.type === 'file') {
+        results.push({ path: item.path, sha: item.sha });
+      }
+    }
+    return results;
+  }
+
   function cancelDelete() {
     pendingDelete = null;
     document.getElementById('deleteConfirmBar').classList.remove('visible');
@@ -2424,6 +2531,7 @@
 
   async function confirmDeleteFile() {
     if (!pendingDelete) return;
+    if (pendingDelete.isFolder) return confirmDeleteFolder();
     const { path, sha, name } = pendingDelete;
     const branch = selectedRepo.default_branch || 'main';
 
@@ -2459,6 +2567,47 @@
       } else {
         throw new Error(data.message || 'No se pudo eliminar el archivo');
       }
+    } catch(e) {
+      const alertEl = document.getElementById('explorerAlert');
+      alertEl.className = 'alert error visible';
+      alertEl.textContent = `✗ Error: ${e.message}`;
+    }
+
+    document.getElementById('deleteSpinner').classList.remove('visible');
+    document.getElementById('deleteBtnText').textContent = 'Eliminar definitivamente';
+    document.querySelector('#deleteConfirmBar .btn-danger').disabled = false;
+    pendingDelete = null;
+  }
+
+  async function confirmDeleteFolder() {
+    const { path, name } = pendingDelete;
+    const branch = selectedRepo.default_branch || 'main';
+
+    document.getElementById('deleteSpinner').classList.add('visible');
+    document.getElementById('deleteBtnText').textContent = 'Buscando archivos...';
+    document.querySelector('#deleteConfirmBar .btn-danger').disabled = true;
+
+    try {
+      const allFiles = await listFilesRecursive(path);
+      if (allFiles.length === 0) throw new Error('La carpeta ya está vacía o no se pudo leer.');
+
+      let done = 0;
+      for (const f of allFiles) {
+        document.getElementById('deleteBtnText').textContent = `Eliminando ${done+1}/${allFiles.length}...`;
+        await fetch(`https://api.github.com/repos/${selectedRepo.full_name}/contents/${encodeURIComponent(f.path)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: `Delete ${f.path} via GitDeploy (carpeta ${name})`, sha: f.sha, branch })
+        });
+        done++;
+      }
+
+      cancelDelete();
+      const alertEl = document.getElementById('explorerAlert');
+      alertEl.className = 'alert success visible';
+      alertEl.textContent = `✓ Carpeta "${name}" y sus ${allFiles.length} archivo(s) eliminados correctamente.`;
+      setTimeout(() => { alertEl.className = 'alert'; }, 5000);
+      await explorerNavigate(explorerPath);
     } catch(e) {
       const alertEl = document.getElementById('explorerAlert');
       alertEl.className = 'alert error visible';
@@ -2998,6 +3147,106 @@
     document.getElementById('renameFileSpinner').classList.remove('visible');
     document.getElementById('renameFileBtnText').textContent = 'Renombrar';
     document.getElementById('confirmRenameFileBtn').disabled = false;
+  }
+
+  // ─── Mover / renombrar carpeta completa ─────────────────────────────────
+  let _moveFolderData = null;
+
+  function openMoveFolderModal(folderPath, folderName) {
+    _moveFolderData = { path: folderPath };
+    let modal = document.getElementById('moveFolderModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'moveFolderModal';
+      modal.className = 'rename-modal-overlay';
+      modal.innerHTML = `
+        <div class="rename-modal">
+          <div class="modal-title">✎ Mover / renombrar carpeta</div>
+          <div class="modal-subtitle">Se moverán todos los archivos de esta carpeta a la nueva ruta.</div>
+          <div class="field" style="margin-top:14px">
+            <label>Nueva ruta de la carpeta</label>
+            <input type="text" id="moveFolderInput" class="input" placeholder="nueva-carpeta/subcarpeta"
+              onkeydown="if(event.key==='Enter') confirmMoveFolder()">
+          </div>
+          <div id="moveFolderAlert" class="alert" style="margin-top:8px"></div>
+          <div class="modal-actions" style="margin-top:14px">
+            <button class="btn btn-ghost" onclick="closeMoveFolderModal()">Cancelar</button>
+            <button class="btn btn-primary" id="confirmMoveFolderBtn" onclick="confirmMoveFolder()">
+              <span id="moveFolderSpinner" class="spinner"></span>
+              <span id="moveFolderBtnText">Mover carpeta</span>
+            </button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+    }
+    document.getElementById('moveFolderInput').value = folderPath;
+    document.getElementById('moveFolderAlert').className = 'alert';
+    document.getElementById('moveFolderBtnText').textContent = 'Mover carpeta';
+    document.getElementById('confirmMoveFolderBtn').disabled = false;
+    modal.classList.add('visible');
+    setTimeout(() => document.getElementById('moveFolderInput').focus(), 100);
+  }
+
+  function closeMoveFolderModal() {
+    const m = document.getElementById('moveFolderModal');
+    if (m) m.classList.remove('visible');
+    _moveFolderData = null;
+  }
+
+  async function confirmMoveFolder() {
+    if (!_moveFolderData || !selectedRepo) return;
+    const oldPath = _moveFolderData.path;
+    const newPath = document.getElementById('moveFolderInput').value.trim().replace(/^\/+|\/+$/g, '');
+    const alertEl = document.getElementById('moveFolderAlert');
+
+    if (!newPath) { alertEl.className = 'alert error visible'; alertEl.textContent = 'Ingresa la nueva ruta.'; return; }
+    if (newPath === oldPath) { alertEl.className = 'alert error visible'; alertEl.textContent = 'La ruta es igual a la actual.'; return; }
+    if (newPath.startsWith(oldPath + '/')) { alertEl.className = 'alert error visible'; alertEl.textContent = 'No puedes mover una carpeta dentro de sí misma.'; return; }
+
+    document.getElementById('moveFolderSpinner').classList.add('visible');
+    document.getElementById('moveFolderBtnText').textContent = 'Buscando archivos...';
+    document.getElementById('confirmMoveFolderBtn').disabled = true;
+
+    try {
+      const branch = selectedRepo.default_branch || 'main';
+      const allFiles = await listFilesRecursive(oldPath);
+      if (allFiles.length === 0) throw new Error('La carpeta está vacía o no se pudo leer.');
+
+      let done = 0;
+      for (const f of allFiles) {
+        document.getElementById('moveFolderBtnText').textContent = `Moviendo ${done+1}/${allFiles.length}...`;
+        const suffix = f.path.slice(oldPath.length); // conserva subcarpetas internas
+        const destPath = newPath + suffix;
+        const fileData = await ghGet(`/repos/${selectedRepo.full_name}/contents/${encodeURIComponent(f.path)}?ref=${branch}`);
+        if (typeof fileData.content !== 'string') throw new Error(`No se pudo leer "${f.path}".`);
+        const createRes = await ghPut(`/repos/${selectedRepo.full_name}/contents/${encodeURIComponent(destPath)}`, {
+          message: `Move ${f.path} → ${destPath} via GitDeploy`,
+          content: fileData.content.replace(/\n/g, ''),
+          branch
+        });
+        if (!createRes.content && !createRes.commit) throw new Error(createRes.message || `No se pudo crear "${destPath}".`);
+        await fetch(`https://api.github.com/repos/${selectedRepo.full_name}/contents/${encodeURIComponent(f.path)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: `Remove old path ${f.path} via GitDeploy`, sha: f.sha, branch })
+        });
+        done++;
+      }
+
+      closeMoveFolderModal();
+      const exAlert = document.getElementById('explorerAlert');
+      exAlert.className = 'alert success visible';
+      exAlert.textContent = `✓ Carpeta movida a "${newPath}" correctamente (${allFiles.length} archivo(s)).`;
+      setTimeout(() => { exAlert.className = 'alert'; }, 5000);
+      await explorerNavigate(explorerPath);
+    } catch(e) {
+      alertEl.className = 'alert error visible';
+      alertEl.textContent = '✗ ' + e.message;
+    }
+
+    document.getElementById('moveFolderSpinner').classList.remove('visible');
+    document.getElementById('moveFolderBtnText').textContent = 'Mover carpeta';
+    document.getElementById('confirmMoveFolderBtn').disabled = false;
   }
 
   // ─── Download functions ───────────────────────────────────────────────────
