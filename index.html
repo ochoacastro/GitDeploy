@@ -829,11 +829,13 @@
       <div class="dropzone" id="dropzone">
         <input type="file" id="fileInput" multiple onchange="handleFiles(this.files)">
         <input type="file" id="folderInput" webkitdirectory multiple style="display:none" onchange="handleFolderFiles(this.files)">
+        <input type="file" id="zipInput" accept=".zip,application/zip" style="display:none" onchange="handleZipFile(this.files[0])">
         <div class="drop-icon">📂</div>
         <div class="drop-text"><strong>Toca para seleccionar</strong> o arrastra archivos / carpetas</div>
         <div style="display:flex;gap:8px;justify-content:center;margin-top:8px;flex-wrap:wrap">
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 12px" onclick="event.stopPropagation();document.getElementById('fileInput').click()">📄 Archivos</button>
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 12px" onclick="event.stopPropagation();document.getElementById('folderInput').click()">📁 Carpeta</button>
+          <button class="btn btn-ghost" style="font-size:10px;padding:5px 12px" onclick="event.stopPropagation();document.getElementById('zipInput').click()">📦 Archivo ZIP</button>
         </div>
         <div class="drop-hint" style="margin-top:6px">HTML · CSS · JS · MD · SVG · TXT · JSON · y más</div>
       </div>
@@ -1706,6 +1708,42 @@
       }
     });
     renderFileQueue();
+  }
+
+  async function handleZipFile(zipFile) {
+    if (!zipFile) return;
+    const zipInputEl = document.getElementById('zipInput');
+    const dz = document.getElementById('dropzone');
+    try {
+      if (dz) dz.classList.add('active');
+      showAlert('uploadAlert', 'success', '⏳ Descomprimiendo ' + zipFile.name + '...');
+      const zip = await JSZip.loadAsync(zipFile);
+      let added = 0;
+      for (const relPath of Object.keys(zip.files)) {
+        const entry = zip.files[relPath];
+        if (entry.dir) continue;
+        // Ignorar metadatos típicos de macOS/otros empaquetadores
+        if (relPath.startsWith('__MACOSX/') || relPath.split('/').pop() === '.DS_Store') continue;
+        const blob = await entry.async('blob');
+        const displayName = relPath.split('/').pop();
+        const file = new File([blob], displayName, { type: blob.type || 'application/octet-stream' });
+        if (!files.find(f => f.name === relPath && f.file.size === file.size)) {
+          files.push({ file, name: relPath, originalName: relPath, displayName, status: 'pending' });
+          added++;
+        }
+      }
+      renderFileQueue();
+      if (added > 0) {
+        showAlert('uploadAlert', 'success', '✓ ' + added + ' archivo(s) extraídos de ' + zipFile.name + ' y agregados a la cola.');
+      } else {
+        showAlert('uploadAlert', 'error', 'El ZIP no contenía archivos nuevos para agregar.');
+      }
+    } catch (e) {
+      showAlert('uploadAlert', 'error', 'No se pudo descomprimir el ZIP: ' + e.message);
+    } finally {
+      if (dz) dz.classList.remove('active');
+      if (zipInputEl) zipInputEl.value = '';
+    }
   }
 
   async function handleDropItems(items) {
