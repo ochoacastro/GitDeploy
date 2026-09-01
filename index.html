@@ -1826,6 +1826,7 @@
             <div class="file-size">${size}</div>
           </div>
           <div class="file-actions">
+            ${displayN.toLowerCase().endsWith('.zip') ? `<button class="btn btn-ghost" onclick="extractZipInQueue(${i})" style="padding:5px 10px;font-size:10px" title="Descomprimir ZIP">📦 Descomprimir</button>` : ''}
             <button class="btn btn-ghost" onclick="toggleRename(${i})" style="padding:5px 10px;font-size:10px" title="Renombrar">✎</button>
             <button class="btn btn-danger" onclick="removeFile(${i})" style="padding:5px 10px" title="Quitar">✕</button>
           </div>
@@ -1843,6 +1844,39 @@
     });
 
     document.getElementById('uploadFooter').style.display = 'block';
+  }
+
+  async function extractZipInQueue(i) {
+    const entry = files[i];
+    if (!entry || !entry.file) return;
+    const folderPath = entry.name.includes('/') ? entry.name.substring(0, entry.name.lastIndexOf('/') + 1) : '';
+    try {
+      showAlert('uploadAlert', 'success', '⏳ Descomprimiendo ' + entry.displayName + '...');
+      const zip = await JSZip.loadAsync(entry.file);
+      const newEntries = [];
+      for (const relPath of Object.keys(zip.files)) {
+        const zEntry = zip.files[relPath];
+        if (zEntry.dir) continue;
+        if (relPath.startsWith('__MACOSX/') || relPath.split('/').pop() === '.DS_Store') continue;
+        const blob = await zEntry.async('blob');
+        const displayName = relPath.split('/').pop();
+        const finalName = folderPath + relPath;
+        const file = new File([blob], displayName, { type: blob.type || 'application/octet-stream' });
+        if (!files.find(f => f.name === finalName && f.file.size === file.size) && !newEntries.find(f => f.name === finalName)) {
+          newEntries.push({ file, name: finalName, originalName: finalName, displayName, status: 'pending' });
+        }
+      }
+      // Reemplaza el .zip en la cola por los archivos extraídos, en el mismo lugar
+      files.splice(i, 1, ...newEntries);
+      renderFileQueue();
+      if (newEntries.length > 0) {
+        showAlert('uploadAlert', 'success', '✓ ' + newEntries.length + ' archivo(s) extraídos de ' + entry.displayName + '.');
+      } else {
+        showAlert('uploadAlert', 'error', 'El ZIP no contenía archivos para agregar.');
+      }
+    } catch (e) {
+      showAlert('uploadAlert', 'error', 'No se pudo descomprimir el ZIP: ' + e.message);
+    }
   }
 
   function toggleRename(i) {
